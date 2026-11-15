@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Зомби-Форт: Тотальная Оборона</title>
+    <style>
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+        body { margin: 0; background: #0d120d; color: #fff; font-family: sans-serif; overflow: hidden; touch-action: manipulation; }
+        canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+        #top-hud {
+            position: fixed; top: 8px; left: 8px; right: 115px; display: flex; flex-wrap: wrap;
+            justify-content: space-between; align-items: center; background: rgba(10, 15, 10, 0.88);
+            padding: 7px 12px; gap: 6px; border-radius: 10px; border: 1px solid #4caf50; font-size: 12px; font-weight: bold; z-index: 5;
+        }
+        .res { display: flex; gap: 8px; }
+        #bottom-bar {
+            position: fixed; bottom: 8px; left: 8px; right: 8px;
+            display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; z-index: 10;
+        }
+        .build-btn {
+            padding: 6px 2px; background: rgba(15, 25, 15, 0.92); border: 2px solid #555; border-radius: 8px;
+            color: #fff; font-size: 10px; font-weight: bold; text-align: center; cursor: pointer;
+        }
+        .build-btn.active { border-color: #ffeb3b; background: rgba(255, 235, 59, 0.25); transform: translateY(-3px); }
+        .build-btn small { display: block; color: #bbb; font-size: 9px; margin-top: 2px; }
+        .screen {
+            position: fixed; inset: 0; background: rgba(8, 12, 8, 0.96); display: flex; flex-direction: column;
+            align-items: center; justify-content: center; text-align: center; padding: 15px; z-index: 20;
+        }
+        h1 { color: #ff5252; font-size: 28px; margin: 0 0 8px; text-shadow: 0 0 15px #d32f2f; }
+        p { color: #ccc; max-width: 400px; line-height: 1.4; margin-bottom: 18px; font-size: 13px; }
+        .diff-list { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 280px; }
+        button.diff-btn { padding: 12px; font-size: 15px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; color: #fff; text-transform: uppercase; }
+        .d-easy { background: #2e7d32; } .d-norm { background: #1565c0; } .d-hard { background: #ef6c00; }
+        .d-imp { background: #c62828; } .d-ext { background: #6a1b9a; box-shadow: 0 0 15px #ab47bc; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+
+    <div id="top-hud">
+        <div class="res"><span>🌲<span id="wood">0</span></span><span>🪨<span id="stone">0</span></span><span>🪙<span id="gold">0</span></span></div>
+        <div id="time-info" style="color:#ffeb3b">☀️ ДЕНЬ 1</div>
+        <div>🏰<span id="base-hp">100</span>%</div>
+    </div>
+
+    <div id="bottom-bar">
+        <div class="build-btn active" id="tool-move" onclick="selectTool('move')">🏃 БЕГ<small>Бой/Сбор</small></div>
+        <div class="build-btn" id="tool-wall" onclick="selectTool('wall')">🧱 СТЕНА<small>8🌲 4🪨</small></div>
+        <div class="build-btn" id="tool-spike" onclick="selectTool('spike')">⚙️ ШИПЫ<small>6🌲 6🪨</small></div>
+        <div class="build-btn" id="tool-turret" onclick="selectTool('turret')">🔫 ТУРЕЛЬ<small>12🪨 8🪙</small></div>
+        <div class="build-btn" id="tool-tesla" onclick="selectTool('tesla')">⚡ ТЕСЛА<small>20🪨 15🪙</small></div>
+        <div class="build-btn" id="tool-mine" onclick="selectTool('mine')">⛏️ ШАХТА<small>15🌲 10🪨</small></div>
+        <div class="build-btn" onclick="healBase()">❤️ ЧИНИТЬ<small>8🌲 4🪙</small></div>
+        <div class="build-btn" id="tool-up" onclick="upgradeHero()">⚔️ УР.<span id="lvl">1</span><small>12🪙</small></div>
+    </div>
+
+    <div id="startScreen" class="screen">
+        <h1>ЗОМБИ-ФОРТ: МЕГА</h1>
+        <p>Огромная карта, 7 видов зомби и 5 типов построек.<br>Выберите уровень сложности для начала:</p>
+        <div class="diff-list">
+            <button class="diff-btn d-easy" onclick="startGame('easy')">1. Легко</button>
+            <button class="diff-btn d-norm" onclick="startGame('normal')">2. Нормально</button>
+            <button class="diff-btn d-hard" onclick="startGame('hard')">3. Сложно</button>
+            <button class="diff-btn d-imp" onclick="startGame('impossible')">4. Невозможно</button>
+            <button class="diff-btn d-ext" onclick="startGame('extreme')">5. Экстрим</button>
+        </div>
+    </div>
+<script>
+    const canvas = document.getElementById('c'), ctx = canvas.getContext('2d'), WORLD_SIZE = 2200;
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize); resize();
+
+    const DIFF_CONFIG = {
+        easy:       { name: 'Легко',      wood: 70, stone: 50, gold: 50, dayLen: 38, hpMult: 0.45, spdMult: 0.70, spawnMult: 0.45 },
+        normal:     { name: 'Нормально',  wood: 50, stone: 35, gold: 35, dayLen: 32, hpMult: 0.65, spdMult: 0.80, spawnMult: 0.65 },
+        hard:       { name: 'Сложно',     wood: 35, stone: 25, gold: 25, dayLen: 26, hpMult: 0.90, spdMult: 0.90, spawnMult: 0.90 },
+        impossible: { name: 'Невозможно', wood: 25, stone: 18, gold: 18, dayLen: 22, hpMult: 1.20, spdMult: 1.00, spawnMult: 1.20 },
+        extreme:    { name: 'Экстрим',    wood: 20, stone: 15, gold: 15, dayLen: 18, hpMult: 1.50, spdMult: 1.15, spawnMult: 1.50 }
+    };
+    const BLD_DATA = {
+        wall:   { w: 8,  s: 4,  g: 0,  r: 18, hp: 240, col: '#a1887f' },
+        spike:  { w: 6,  s: 6,  g: 0,  r: 16, hp: 140, col: '#90a4ae' },
+        turret: { w: 0,  s: 12, g: 8,  r: 17, hp: 150, col: '#00e5ff' },
+        tesla:  { w: 0,  s: 20, g: 15, r: 19, hp: 180, col: '#e040fb' },
+        mine:   { w: 15, s: 10, g: 0,  r: 20, hp: 160, col: '#ffd54f' }
+    };
+    const ZMB_DATA = {
+        normal:  { r: 13, hp: 30,  spd: 45, dmg: 6,  col: '#e53935', gold: 5 },
+        runner:  { r: 10, hp: 20,  spd: 75, dmg: 5,  col: '#ffeb3b', gold: 5 },
+        tank:    { r: 19, hp: 95,  spd: 28, dmg: 12, col: '#8e24aa', gold: 10 },
+        bomber:  { r: 13, hp: 25,  spd: 60, dmg: 35, col: '#ff6d00', gold: 8 },
+        spitter: { r: 13, hp: 28,  spd: 40, dmg: 7,  col: '#76ff03', gold: 8 },
+        necro:   { r: 15, hp: 55,  spd: 32, dmg: 6,  col: '#00b0ff', gold: 12 },
+        boss:    { r: 28, hp: 300, spd: 22, dmg: 22, col: '#d500f9', gold: 40 }
+    };
+
+    let state = 'menu', animId = null, lastTime = 0, cfg = DIFF_CONFIG.normal;
+    let wood = 50, stone = 35, gold = 35, day = 1, isNight = false, phaseTimer = 32, currentTool = 'move';
+    const base = { x: WORLD_SIZE / 2, y: WORLD_SIZE / 2, r: 34, hp: 150, maxHp: 150 };
+    const player = { x: base.x, y: base.y + 60, tx: base.x, ty: base.y + 60, r: 15, speed: 230, dmg: 28, lvl: 1, atkCd: 0 };
+    const cam = { x: 0, y: 0 };
+    let resources = [], buildings = [], zombies = [], bullets = [], enemyBullets = [], particles = [];
+
+    function selectTool(tool) {
+        currentTool = tool;
+        document.querySelectorAll('.build-btn').forEach(b => b.classList.remove('active'));
+        const el = document.getElementById('tool-' + tool);
+        if (el) el.classList.add('active');
+    }
+
+    function updateHUD() {
+        document.getElementById('wood').textContent = wood;
+        document.getElementById('stone').textContent = stone;
+        document.getElementById('gold').textContent = gold;
+        document.getElementById('lvl').textContent = player.lvl;
+        document.getElementById('base-hp').textContent = Math.max(0, Math.ceil((base.hp / base.maxHp) * 100));
+        const tEl = document.getElementById('time-info');
+        tEl.textContent = `${isNight ? '🌙 НОЧЬ' : '☀️ ДЕНЬ'} ${day} (${Math.ceil(phaseTimer)}с)`;
+        tEl.style.color = isNight ? '#ff5252' : '#ffeb3b';
+    }
+
+    function addParticles(x, y, color, count) {
+        for (let i = 0; i < count; i++) {
+            const ang = Math.random() * Math.PI * 2, spd = Math.random() * 70 + 20;
+            particles.push({ x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, life: 0.6, color });
+        }
+    }
+
+    function healBase() {
+        if (state !== 'play' || wood < 8 || gold < 4) return;
+        wood -= 8; gold -= 4;
+        base.hp = Math.min(base.maxHp, base.hp + 60);
+        buildings.forEach(b => b.hp = Math.min(b.maxHp, b.hp + b.maxHp * 0.6));
+        addParticles(base.x, base.y, '#00ff88', 20);
+        updateHUD();
+    }
+
+    function upgradeHero() {
+        if (state !== 'play' || gold < 12) return;
+        gold -= 12; player.lvl++; player.dmg += 15; player.speed += 20;
+        addParticles(player.x, player.y, '#ffeb3b', 18);
+        updateHUD();
+    }
+    function handleTap(sx, sy) {
+        if (state !== 'play' || sy < 55 || sy > canvas.height - 65) return;
+        const wx = sx + cam.x, wy = sy + cam.y;
+        if (currentTool === 'move') {
+            player.tx = Math.max(20, Math.min(WORLD_SIZE - 20, wx));
+            player.ty = Math.max(20, Math.min(WORLD_SIZE - 20, wy));
+            return;
+        }
+        if (Math.hypot(wx - base.x, wy - base.y) < 55 || buildings.some(b => Math.hypot(wx - b.x, wy - b.y) < 32)) return;
+        const b = BLD_DATA[currentTool];
+        if (b && wood >= b.w && stone >= b.s && gold >= b.g) {
+            wood -= b.w; stone -= b.s; gold -= b.g;
+            buildings.push({ type: currentTool, x: wx, y: wy, r: b.r, hp: b.hp, maxHp: b.hp, cd: 0 });
+            addParticles(wx, wy, b.col, 12);
+            updateHUD();
+        }
+    }
+    canvas.addEventListener('touchstart', e => { e.preventDefault(); handleTap(e.changedTouches[0].clientX, e.changedTouches[0].clientY); }, { passive: false });
+    canvas.addEventListener('mousedown', e => handleTap(e.clientX, e.clientY));
+
+    function spawnResources() {
+        while (resources.length < 75) {
+            const x = 60 + Math.random() * (WORLD_SIZE - 120), y = 60 + Math.random() * (WORLD_SIZE - 120);
+            if (Math.hypot(x - base.x, y - base.y) < 120) continue;
+            const r = Math.random();
+            resources.push({ type: r < 0.45 ? 'tree' : (r < 0.80 ? 'stone' : 'gold'), x, y, r: 18, hp: 25 });
+        }
+    }
+
+    function startGame(diffKey) {
+        cfg = DIFF_CONFIG[diffKey] || DIFF_CONFIG.normal;
+        wood = cfg.wood; stone = cfg.stone; gold = cfg.gold;
+        day = 1; isNight = false; phaseTimer = cfg.dayLen; base.hp = base.maxHp;
+        player.x = player.tx = base.x; player.y = player.ty = base.y + 65;
+        player.speed = 230; player.dmg = 28; player.lvl = 1;
+        resources = []; buildings = []; zombies = []; bullets = []; enemyBullets = []; particles = [];
+        spawnResources(); selectTool('move'); updateHUD();
+        document.getElementById('startScreen').classList.add('hidden');
+        state = 'play'; lastTime = performance.now();
+        cancelAnimationFrame(animId); animId = requestAnimationFrame(loop);
+    }
+
+    function spawnZombie(customType = null, sx = null, sy = null) {
+        let x = sx, y = sy, r = Math.random(), type = customType || 'normal';
+        if (x === null) {
+            const ang = Math.random() * Math.PI * 2, dist = 750 + Math.random() * 250;
+            x = Math.max(20, Math.min(WORLD_SIZE - 20, base.x + Math.cos(ang) * dist));
+            y = Math.max(20, Math.min(WORLD_SIZE - 20, base.y + Math.sin(ang) * dist));
+        }
+        if (!customType) {
+            if (day >= 7 && r < 0.06) type = 'boss';
+            else if (day >= 5 && r < 0.15) type = 'necro';
+            else if (day >= 4 && r < 0.28) type = 'bomber';
+            else if (day >= 3 && r < 0.44) type = 'spitter';
+            else if (r < 0.60) type = 'tank';
+            else if (r < 0.80) type = 'runner';
+        }
+        const st = ZMB_DATA[type], mult = (1 + (day - 1) * 0.11) * cfg.hpMult;
+        zombies.push({ type, x, y, r: st.r, hp: st.hp * mult, maxHp: st.hp * mult, speed: st.spd * cfg.spdMult, dmg: st.dmg, color: st.col, gold: st.gold, atkCd: 0, skillCd: 5.0 });
+    }
+
+    function update(dt) {
+        if ((phaseTimer -= dt) <= 0) {
+            isNight = !isNight;
+            if (isNight) phaseTimer = 18 + day * 1.5;
+            else {
+                day++; phaseTimer = cfg.dayLen; spawnResources();
+                buildings.forEach(b => { if (b.type === 'mine') { wood += 8; stone += 16; gold += 14; addParticles(b.x, b.y, '#ffd54f', 12); } });
+            }
+        }
+        updateHUD();
+        if (isNight && Math.random() < (0.55 + day * 0.16) * cfg.spawnMult * dt) spawnZombie();
+
+        if (Math.hypot(player.tx - player.x, player.ty - player.y) > 4) {
+            const ang = Math.atan2(player.ty - player.y, player.tx - player.x);
+            player.x += Math.cos(ang) * player.speed * dt; player.y += Math.sin(ang) * player.speed * dt;
+        }
+        cam.x = Math.max(0, Math.min(WORLD_SIZE - canvas.width, player.x - canvas.width / 2));
+        cam.y = Math.max(0, Math.min(WORLD_SIZE - canvas.height, player.y - canvas.height / 2));
+
+        if ((player.atkCd -= dt) <= 0) {
+            let hit = false;
+            for (let i = zombies.length - 1; i >= 0; i--) {
+                const z = zombies[i];
+                if (Math.hypot(z.x - player.x, z.y - player.y) < player.r + z.r + 32) {
+                    z.hp -= player.dmg; addParticles(z.x, z.y, '#ff5252', 6); hit = true;
+                    if (z.hp <= 0) { gold += z.gold; zombies.splice(i, 1); }
+                    break;
+                }
+            }
+            if (!hit) for (let i = resources.length - 1; i >= 0; i--) {
+                const res = resources[i];
+                if (Math.hypot(res.x - player.x, res.y - player.y) < player.r + res.r + 24) {
+                    res.hp -= player.dmg; addParticles(res.x, res.y, '#ffd54f', 5); hit = true;
+                    if (res.hp <= 0) {
+                        if (res.type === 'tree') wood += 14; else if (res.type === 'stone') stone += 12; else gold += 14;
+                        resources.splice(i, 1);
+                    }
+                    break;
+                }
+            }
+            if (hit) { player.atkCd = 0.32; updateHUD(); }
+        }
+        for (let b of buildings) {
+            if ((b.cd -= dt) > 0 || !zombies.length) continue;
+            if (b.type === 'turret') {
+                let nearest = null, minD = 260;
+                for (let z of zombies) { const d = Math.hypot(z.x - b.x, z.y - b.y); if (d < minD) { minD = d; nearest = z; } }
+                if (nearest) {
+                    const ang = Math.atan2(nearest.y - b.y, nearest.x - b.x);
+                    bullets.push({ x: b.x, y: b.y, vx: Math.cos(ang) * 480, vy: Math.sin(ang) * 480, dmg: 22 + day * 3 });
+                    b.cd = 0.42;
+                }
+            } else if (b.type === 'tesla') {
+                let hitAny = false;
+                for (let i = zombies.length - 1; i >= 0; i--) {
+                    const z = zombies[i];
+                    if (Math.hypot(z.x - b.x, z.y - b.y) < 200) {
+                        z.hp -= (32 + day * 4); addParticles(z.x, z.y, '#e040fb', 6); hitAny = true;
+                        if (z.hp <= 0) { gold += z.gold; zombies.splice(i, 1); }
+                    }
+                }
+                if (hitAny) { b.cd = 1.1; updateHUD(); }
+            }
+        }
+
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            const bul = bullets[i]; bul.x += bul.vx * dt; bul.y += bul.vy * dt;
+            if (bul.x < 0 || bul.x > WORLD_SIZE || bul.y < 0 || bul.y > WORLD_SIZE) { bullets.splice(i, 1); continue; }
+            for (let j = zombies.length - 1; j >= 0; j--) {
+                const z = zombies[j];
+                if (Math.hypot(bul.x - z.x, bul.y - z.y) < z.r + 8) {
+                    z.hp -= bul.dmg; addParticles(bul.x, bul.y, '#00e5ff', 4); bullets.splice(i, 1);
+                    if (z.hp <= 0) { gold += z.gold; zombies.splice(j, 1); updateHUD(); }
+                    break;
+                }
+            }
+        }
+
+        for (let i = enemyBullets.length - 1; i >= 0; i--) {
+            const eb = enemyBullets[i]; eb.x += eb.vx * dt; eb.y += eb.vy * dt;
+            if ((eb.life -= dt) <= 0) { enemyBullets.splice(i, 1); continue; }
+            if (Math.hypot(eb.x - base.x, eb.y - base.y) < base.r + 5) { base.hp -= eb.dmg; addParticles(eb.x, eb.y, '#76ff03', 6); enemyBullets.splice(i, 1); updateHUD(); continue; }
+            for (let j = buildings.length - 1; j >= 0; j--) {
+                const b = buildings[j];
+                if (Math.hypot(eb.x - b.x, eb.y - b.y) < b.r + 5) {
+                    if ((b.hp -= eb.dmg) <= 0) buildings.splice(j, 1);
+                    addParticles(eb.x, eb.y, '#76ff03', 5); enemyBullets.splice(i, 1); break;
+                }
+            }
+        }
+
+        for (let i = zombies.length - 1; i >= 0; i--) {
+            const z = zombies[i]; z.atkCd -= dt;
+            if (z.type === 'necro' && (z.skillCd -= dt) <= 0) { spawnZombie('runner', z.x + 25, z.y); addParticles(z.x, z.y, '#00b0ff', 10); z.skillCd = 8.0; }
+            let target = base, minD = Math.hypot(base.x - z.x, base.y - z.y);
+            for (let b of buildings) { if (b.type !== 'spike') { const d = Math.hypot(b.x - z.x, b.y - z.y); if (d < minD) { minD = d; target = b; } } }
+            for (let j = buildings.length - 1; j >= 0; j--) {
+                const b = buildings[j];
+                if (b.type === 'spike' && Math.hypot(b.x - z.x, b.y - z.y) < b.r + z.r) { z.hp -= 42 * dt; if ((b.hp -= 7 * dt) <= 0) buildings.splice(j, 1); }
+            }
+            if (z.hp <= 0) { gold += z.gold; zombies.splice(i, 1); updateHUD(); continue; }
+            const ang = Math.atan2(target.y - z.y, target.x - z.x), stopDist = z.type === 'spitter' ? 170 : z.r + target.r;
+            if (minD > stopDist) { z.x += Math.cos(ang) * z.speed * dt; z.y += Math.sin(ang) * z.speed * dt; }
+            else if (z.atkCd <= 0) {
+                if (z.type === 'bomber') {
+                    addParticles(z.x, z.y, '#ff6d00', 25);
+                    if (Math.hypot(base.x - z.x, base.y - z.y) < 80) base.hp -= z.dmg;
+                    for (let j = buildings.length - 1; j >= 0; j--) if (Math.hypot(buildings[j].x - z.x, buildings[j].y - z.y) < 80 && (buildings[j].hp -= z.dmg) <= 0) buildings.splice(j, 1);
+                    zombies.splice(i, 1); updateHUD(); continue;
+                } else if (z.type === 'spitter') { enemyBullets.push({ x: z.x, y: z.y, vx: Math.cos(ang) * 200, vy: Math.sin(ang) * 200, dmg: z.dmg, life: 1.5 }); z.atkCd = 2.2; }
+                else { target.hp -= z.dmg; addParticles(target.x, target.y, '#ff5252', 5); z.atkCd = 1.1; if (target !== base && target.hp <= 0) buildings = buildings.filter(b => b !== target); updateHUD(); }
+            }
+            if (base.hp <= 0) {
+                state = 'gameover'; const scr = document.getElementById('startScreen');
+                scr.querySelector('h1').textContent = 'БАЗА ПАЛА'; scr.querySelector('p').innerHTML = `Сложность: <b>${cfg.name}</b><br>Вы продержались до <b>${day}-го дня</b>!`;
+                scr.classList.remove('hidden'); return;
+            }
+        }
+        for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx * dt; p.y += p.vy * dt; if ((p.life -= dt) <= 0) particles.splice(i, 1); }
+    }
+
+    function draw() {
+        ctx.fillStyle = isNight ? '#0a0f14' : '#182b18'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.save(); ctx.translate(-cam.x, -cam.y);
+        ctx.strokeStyle = isNight ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+        for (let x = Math.floor(cam.x / 80) * 80; x < cam.x + canvas.width; x += 80) { ctx.beginPath(); ctx.moveTo(x, cam.y); ctx.lineTo(x, cam.y + canvas.height); ctx.stroke(); }
+        for (let y = Math.floor(cam.y / 80) * 80; y < cam.y + canvas.height; y += 80) { ctx.beginPath(); ctx.moveTo(cam.x, y); ctx.lineTo(cam.x + canvas.width, y); ctx.stroke(); }
+        ctx.strokeStyle = '#ff5252'; ctx.lineWidth = 4; ctx.strokeRect(0, 0, WORLD_SIZE, WORLD_SIZE);
+
+        const drawCircle = (x, y, r, fill, stroke, lw) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); } };
+        resources.forEach(res => drawCircle(res.x, res.y, res.r, res.type === 'tree' ? '#2e7d32' : (res.type === 'stone' ? '#78909c' : '#fbc02d'), '#000', 2));
+        const bCols = { wall: '#8d6e63', spike: '#607d8b', turret: '#0288d1', tesla: '#ab47bc', mine: '#f9a825' };
+        buildings.forEach(b => {
+            drawCircle(b.x, b.y, b.r, bCols[b.type], '#fff', 2);
+            if (b.hp < b.maxHp) { ctx.fillStyle = '#000'; ctx.fillRect(b.x - b.r, b.y - b.r - 6, b.r * 2, 3); ctx.fillStyle = '#00ff88'; ctx.fillRect(b.x - b.r, b.y - b.r - 6, b.r * 2 * (b.hp / b.maxHp), 3); }
+        });
+        drawCircle(base.x, base.y, base.r, '#43a047', '#a5d6a7', 3);
+        if (Math.hypot(player.tx - player.x, player.ty - player.y) > 6) drawCircle(player.tx, player.ty, 8, 'transparent', 'rgba(255,255,255,0.35)', 1);
+        drawCircle(player.x, player.y, player.r, '#ffca28', '#fff', 2);
+
+        zombies.forEach(z => {
+            drawCircle(z.x, z.y, z.r, z.color);
+            if (z.hp < z.maxHp) { ctx.fillStyle = '#000'; ctx.fillRect(z.x - z.r, z.y - z.r - 7, z.r * 2, 4); ctx.fillStyle = '#ff5252'; ctx.fillRect(z.x - z.r, z.y - z.r - 7, z.r * 2 * (z.hp / z.maxHp), 4); }
+        });
+        bullets.forEach(bul => drawCircle(bul.x, bul.y, 4, '#00e5ff'));
+        enemyBullets.forEach(eb => drawCircle(eb.x, eb.y, 5, '#76ff03'));
+        particles.forEach(p => { ctx.globalAlpha = Math.max(0, p.life * 1.5); ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 4, 4); });
+        ctx.globalAlpha = 1; ctx.restore();
+
+        const ms = 96, mx = canvas.width - ms - 8, sc = ms / WORLD_SIZE;
+        ctx.fillStyle = 'rgba(0, 10, 0, 0.78)'; ctx.fillRect(mx, 8, ms, ms); ctx.strokeStyle = '#4caf50'; ctx.lineWidth = 1.5; ctx.strokeRect(mx, 8, ms, ms);
+        resources.forEach(res => { ctx.fillStyle = res.type === 'tree' ? '#4caf50' : (res.type === 'stone' ? '#90a4ae' : '#ffeb3b'); ctx.fillRect(mx + res.x * sc - 1, 8 + res.y * sc - 1, 2, 2); });
+        ctx.fillStyle = '#00ff88'; ctx.fillRect(mx + base.x * sc - 3, 8 + base.y * sc - 3, 6, 6);
+        ctx.fillStyle = '#fff'; ctx.fillRect(mx + player.x * sc - 2, 8 + player.y * sc - 2, 4, 4);
+        ctx.fillStyle = '#ff1744'; zombies.forEach(z => ctx.fillRect(mx + z.x * sc - 1.5, 8 + z.y * sc - 1.5, 3, 3));
+    }
+
+    function loop(now) { if (state === 'play') { update(Math.min(0.05, (now - lastTime) / 1000)); lastTime = now; draw(); animId = requestAnimationFrame(loop); } }
+</script>
+</body>
+</html>
